@@ -1,0 +1,2 @@
+ALTER TABLE "ThreadsAccount"
+  ADD COLUMN IF NOT EXISTS "rssIncludeSources" BOOLEAN NOT NULL DEFAULT true;

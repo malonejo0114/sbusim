@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MediaType {
+  TEXT
+  IMAGE
+  VIDEO
+}
+
+enum ScheduledPostStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL_FAILED
+}
+
+enum ScheduledReplyStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum DailyTopicPlanContentType {
+  TOPIC
+  INFO
+  CTA
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String?  @unique
+  createdAt DateTime @default(now())
+
+  threadsAccounts          ThreadsAccount[]
+  naverAccounts            NaverAccount[]
+  cardNewsProjects         CardNewsProject[]
+  threadsFollowerSnapshots ThreadsFollowerSnapshot[]
+  scheduledPosts           ScheduledPost[]
+  dailyTopicPlans          DailyTopicPlan[]
+  promptTemplates          PromptTemplate[]
+  aiPromptSettings         AiPromptSetting[]
+  aiUsageLogs              AiUsageLog[]
+}
+
+model DashboardLoginAccount {
+  id               String   @id @default(cuid())
+  loginId          String   @unique
+  passwordHash     String
+  canonicalLoginId String?
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([enabled, createdAt])
+}
+
+model ThreadsAccount {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label               String?
+  threadsUserId       String?
+  threadsUsername     String?
+  accessTokenEncrypted String
+  proxyUrlEncrypted   String?
+  tokenExpiresAt      DateTime
+  rssReviewEnabled    Boolean  @default(false)
+  rssIncludeSources   Boolean  @default(true)
+  rssAutoPostEnabled  Boolean  @default(false)
+  rssAutoPostMinIntervalMinutes Int @default(60)
+  rssAutoPostMaxIntervalMinutes Int @default(90)
+  rssFetchCount       Int      @default(1)
+  rssKeywordIncludeCsv String?
+  rssKeywordExcludeCsv String?
+  rssPromptTemplate   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  scheduledPosts    ScheduledPost[]
+  dailyTopicPlans   DailyTopicPlan[]
+  followerSnapshots ThreadsFollowerSnapshot[]
+
+  @@index([userId])
+  @@index([userId, rssReviewEnabled])
+  @@index([threadsUserId])
+  @@unique([userId, threadsUserId])
+}
+
+model NaverAccount {
+  id                   String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label                String?
+  naverUserId          String?
+  naverEmail           String?
+  naverNickname        String?
+  accessTokenEncrypted String
+  refreshTokenEncrypted String?
+  tokenExpiresAt       DateTime
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+  @@index([naverUserId])
+  @@unique([userId, naverUserId])
+}
+
+model CardNewsProject {
+  id                 String          @id @default(cuid())
+  userId             String
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title              String
+  brand              String?
+  templateKey        String
+  backgroundImageUrl String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  slides             CardNewsSlide[]
+
+  @@index([userId, updatedAt])
+}
+
+model CardNewsSlide {
+  id           String          @id @default(cuid())
+  projectId    String
+  project      CardNewsProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  orderIndex   Int
+  pageLabel    String?
+  eyebrow      String?
+  title        String
+  accentTitle  String?
+  subtitle     String?
+  body         String?
+  quote        String?
+  footer       String?
+  statsJson    Json?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@unique([projectId, orderIndex])
+  @@index([projectId, orderIndex])
+}
+
+model ThreadsFollowerSnapshot {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadsAccountId String
+  threadsAccount   ThreadsAccount @relation(fields: [threadsAccountId], references: [id], onDelete: Cascade)
+  dateKst          String         @db.VarChar(10)
+  followerCount    Int
+  capturedAt       DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([threadsAccountId, dateKst])
+  @@index([userId, dateKst])
+  @@index([threadsAccountId, capturedAt])
+}
+
+model ScheduledPost {
+  id                  String              @id @default(cuid())
+  userId              String
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadsAccountId    String
+  threadsAccount      ThreadsAccount      @relation(fields: [threadsAccountId], references: [id], onDelete: Cascade)
+  dailyTopicPlanId    String?
+  dailyTopicPlan      DailyTopicPlan?     @relation(fields: [dailyTopicPlanId], references: [id], onDelete: SetNull)
+  text                String
+  mediaType           MediaType
+  mediaUrl            String?
+  commentText         String?
+  commentDelaySeconds Int                @default(0)
+  scheduledAt         DateTime
+  status              ScheduledPostStatus @default(PENDING)
+  remotePostId        String?
+  publishedAt         DateTime?
+  remoteCommentId     String?
+  viewsCount          Int                 @default(0)
+  likesCount          Int                 @default(0)
+  repliesCount        Int                 @default(0)
+  repostsCount        Int                 @default(0)
+  quotesCount         Int                 @default(0)
+  insightsUpdatedAt   DateTime?
+  insightsLastError   String?
+  lastError           String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  replies             ScheduledPostReply[]
+
+  @@index([status, scheduledAt])
+  @@index([userId, scheduledAt])
+  @@index([threadsAccountId, scheduledAt])
+  @@index([threadsAccountId, publishedAt])
+  @@index([dailyTopicPlanId])
+}
+
+model ScheduledPostReply {
+  id              String               @id @default(cuid())
+  scheduledPostId String
+  scheduledPost   ScheduledPost        @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  orderIndex      Int
+  text            String
+  status          ScheduledReplyStatus @default(PENDING)
+  remoteReplyId   String?
+  lastError       String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@unique([scheduledPostId, orderIndex])
+  @@index([scheduledPostId, orderIndex])
+  @@index([status, scheduledPostId])
+}
+
+model DailyTopicPlan {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadsAccountId String
+  threadsAccount   ThreadsAccount @relation(fields: [threadsAccountId], references: [id], onDelete: Cascade)
+  contentType      DailyTopicPlanContentType @default(TOPIC)
+  topic            String
+  promptHint       String?
+  ctaText          String?
+  dailyCount       Int      @default(1)
+  intervalMinutes  Int      @default(60)
+  intervalMinMinutes Int    @default(60)
+  intervalMaxMinutes Int    @default(90)
+  scheduleHour     Int      @default(9)
+  scheduleMinute   Int      @default(0)
+  windowStartHour  Int      @default(9)
+  windowEndHour    Int      @default(23)
+  weekdaysCsv      String   @default("1,2,3,4,5")
+  infoRatioPercent Int      @default(70)
+  ctaRatioPercent  Int      @default(30)
+  similarityThresholdPct Int @default(72)
+  telegramOnError  Boolean  @default(true)
+  timezone         String   @default("Asia/Seoul")
+  enabled          Boolean  @default(true)
+  lastGeneratedDate String?
+  lastGeneratedAt  DateTime?
+  lastError        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  scheduledPosts ScheduledPost[]
+
+  @@index([userId, enabled])
+  @@index([threadsAccountId, enabled])
+}
+
+model PromptTemplate {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  prompt    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+  @@unique([userId, name])
+}
+
+model AiPromptSetting {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+  @@unique([userId, key])
+}
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider         String
+  model            String
+  requestType      String?
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  requestCount     Int      @default(1)
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([provider, model, createdAt])
+}

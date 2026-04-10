@@ -1,0 +1,3 @@
+ALTER TABLE "DailyTopicPlan"
+  ADD COLUMN IF NOT EXISTS "similarityThresholdPct" INTEGER NOT NULL DEFAULT 72;
+

@@ -1,0 +1,13 @@
+{
+  # Email used for Let's Encrypt account notifications.
+  email ops@sbusim.co.kr
+}
+
+app.sbusim.co.kr {
+  reverse_proxy app_prod_web:3000
+}
+
+stg.sbusim.co.kr {
+  reverse_proxy app_stg_web:3000
+}
+

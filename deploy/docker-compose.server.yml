@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sbusim
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: sbusim_prod
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sbusim -d sbusim_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - redis_data:/data
+
+  app_prod_web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/prod.env
+    environment:
+      DATABASE_URL: postgresql://sbusim:${POSTGRES_PASSWORD}@postgres:5432/sbusim_prod?schema=public
+      REDIS_URL: redis://redis:6379
+      SBUSIM_QUEUE_NAME: sbusim_prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["pnpm", "start"]
+    volumes:
+      - prod_uploads:/app/public/uploads
+
+  app_prod_worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/prod.env
+    environment:
+      DATABASE_URL: postgresql://sbusim:${POSTGRES_PASSWORD}@postgres:5432/sbusim_prod?schema=public
+      REDIS_URL: redis://redis:6379
+      SBUSIM_QUEUE_NAME: sbusim_prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["pnpm", "worker"]
+    volumes:
+      - prod_uploads:/app/public/uploads
+
+  app_stg_web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/stg.env
+    environment:
+      DATABASE_URL: postgresql://sbusim:${POSTGRES_PASSWORD}@postgres:5432/sbusim_stg?schema=public
+      REDIS_URL: redis://redis:6379
+      SBUSIM_QUEUE_NAME: sbusim_stg
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["pnpm", "start"]
+    volumes:
+      - stg_uploads:/app/public/uploads
+
+  app_stg_worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/stg.env
+    environment:
+      DATABASE_URL: postgresql://sbusim:${POSTGRES_PASSWORD}@postgres:5432/sbusim_stg?schema=public
+      REDIS_URL: redis://redis:6379
+      SBUSIM_QUEUE_NAME: sbusim_stg
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["pnpm", "worker"]
+    volumes:
+      - stg_uploads:/app/public/uploads
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app_prod_web
+      - app_stg_web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  prod_uploads:
+  stg_uploads:
+
