@@ -1,7 +1,7 @@
 import { MediaType, ScheduledPostStatus, ScheduledReplyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createContainer, publishContainer } from "@/server/threadsApi";
-import { ensureValidAccessToken } from "@/server/threadsToken";
+import { ensureValidAccessToken, refreshDueThreadsAccountTokens } from "@/server/threadsToken";
 import { enqueueCommentJob, enqueueInsightJob } from "@/server/queue";
 import { syncPostInsightsBatch, syncScheduledPostInsightsById } from "@/server/insights";
 import { optionalEnv } from "@/server/env";
@@ -610,6 +610,63 @@ export async function handleInsightsSyncJob() {
 export async function handleDailyTopicPlannerJob() {
   const result = await runDailyTopicPlanner();
   console.log("[daily-topic-planner] result:", result);
+}
+
+function formatKstDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+}
+
+function compactTokenRefreshRows(
+  rows: Array<{ name: string; nextExpiresAt?: string; expiresAt?: string; error?: string }>,
+  max = 12
+) {
+  return rows
+    .slice(0, max)
+    .map((row) => {
+      if (row.error) {
+        return `- ${row.name}: 실패 (${row.error})`;
+      }
+      return `- ${row.name}: 갱신 완료, 다음 만료 ${formatKstDateTime(row.nextExpiresAt ?? "")}`;
+    })
+    .join("\n");
+}
+
+export async function handleThreadsTokenRefreshJob() {
+  const result = await refreshDueThreadsAccountTokens({ thresholdDays: 30 });
+  console.log("[threads-token-refresh] result:", {
+    checkedCount: result.checkedCount,
+    refreshedCount: result.refreshed.length,
+    failedCount: result.failed.length,
+  });
+
+  if (result.refreshed.length > 0) {
+    await sendTelegramAlert(
+      [
+        "스부심 Threads 토큰 자동 갱신 완료",
+        `갱신 계정: ${result.refreshed.length}개`,
+        compactTokenRefreshRows(result.refreshed),
+      ].join("\n")
+    ).catch((err) => {
+      console.error("[threads-token-refresh] telegram success alert failed:", err);
+    });
+  }
+
+  if (result.failed.length > 0) {
+    await sendTelegramAlert(
+      [
+        "스부심 Threads 토큰 자동 갱신 실패",
+        `실패 계정: ${result.failed.length}개`,
+        compactTokenRefreshRows(result.failed),
+        "만료되었거나 권한이 해제된 계정은 Threads 계정 추가 연결로 다시 연결해야 합니다.",
+      ].join("\n")
+    ).catch((err) => {
+      console.error("[threads-token-refresh] telegram failure alert failed:", err);
+    });
+  }
+
+  return result;
 }
 
 export async function handlePostQueueDispatchJob() {

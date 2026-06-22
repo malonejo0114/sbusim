@@ -116,6 +116,26 @@ export async function ensureInsightsSyncJob() {
   }
 }
 
+export async function ensureThreadsTokenRefreshJob() {
+  const queue = getQueue();
+  try {
+    await queue.add(
+      "threads-token-refresh",
+      {},
+      {
+        jobId: "threads-token-refresh",
+        repeat: { every: 24 * 60 * 60 * 1000 },
+        removeOnComplete: true,
+        removeOnFail: 100,
+      }
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes("exists")) return;
+    throw err;
+  }
+}
+
 export async function ensureDailyTopicPlannerJob() {
   const queue = getQueue();
   try {

@@ -6,6 +6,7 @@ import {
   ensureInsightsSyncJob,
   ensurePostQueueDispatchJob,
   ensureRssReviewHourlyJob,
+  ensureThreadsTokenRefreshJob,
   SBUSIM_QUEUE_NAME,
 } from "@/server/queue";
 import { getRedisConnection } from "@/server/redis";
@@ -17,6 +18,7 @@ import {
   handlePostQueueDispatchJob,
   handlePublishJob,
   handleRssReviewHourlyJob,
+  handleThreadsTokenRefreshJob,
 } from "@/server/jobHandlers";
 
 function requireEnv(name: string) {
@@ -40,6 +42,7 @@ async function main() {
     async (job) => {
       if (job.name === "daily-topic-planner") return handleDailyTopicPlannerJob();
       if (job.name === "insights-sync") return handleInsightsSyncJob();
+      if (job.name === "threads-token-refresh") return handleThreadsTokenRefreshJob();
       if (job.name === "rss-review-hourly") return handleRssReviewHourlyJob();
       if (job.name === "post-queue-dispatch") return handlePostQueueDispatchJob();
 
@@ -77,6 +80,7 @@ async function main() {
 
   await ensureDailyTopicPlannerJob();
   await ensureInsightsSyncJob();
+  await ensureThreadsTokenRefreshJob();
   await ensureRssReviewHourlyJob();
   await ensurePostQueueDispatchJob();
 
