@@ -216,6 +216,19 @@ function signedDeltaTextClass(value: number | null | undefined) {
   return value > 0 ? "text-emerald-700" : "text-rose-700";
 }
 
+function getTokenStatus(tokenExpiresAt: string, nowMs = Date.now()) {
+  const expiresMs = new Date(tokenExpiresAt).getTime();
+  if (!Number.isFinite(expiresMs)) {
+    return { expired: false, expiringSoon: false, days: null as number | null };
+  }
+  const days = Math.ceil((expiresMs - nowMs) / (24 * 60 * 60 * 1000));
+  return {
+    expired: expiresMs <= nowMs,
+    expiringSoon: expiresMs > nowMs && days <= 7,
+    days,
+  };
+}
+
 type Tab = "content" | "performance" | "settings";
 
 export default function AccountWorkspaceClient({ accountId }: { accountId: string }) {
@@ -229,6 +242,9 @@ export default function AccountWorkspaceClient({ accountId }: { accountId: strin
   const [threadsAccounts, setThreadsAccounts] = useState<ThreadsAccount[]>([]);
   const [account, setAccount] = useState<ThreadsAccount | null>(null);
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [bulkDeleteMessage, setBulkDeleteMessage] = useState<string | null>(null);
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
   const [dailyPlans, setDailyPlans] = useState<DailyTopicPlan[]>([]);
 
@@ -585,6 +601,101 @@ export default function AccountWorkspaceClient({ accountId }: { accountId: strin
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleSelectedAccount(id: string) {
+    setSelectedAccountIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }
+
+  function selectExpiredAccounts() {
+    const expiredIds = threadsAccounts
+      .filter((item) => getTokenStatus(item.tokenExpiresAt).expired)
+      .map((item) => item.id);
+    setSelectedAccountIds(expiredIds);
+    setBulkDeleteMessage(expiredIds.length > 0 ? `만료 계정 ${expiredIds.length}개를 선택했습니다.` : "만료된 계정이 없습니다.");
+  }
+
+  async function deleteAccountById(id: string, force = false) {
+    const res = await fetch(`/api/threads-accounts/${id}${force ? "?force=1" : ""}`, { method: "DELETE" });
+    const data = await res.json().catch(() => null);
+    return { res, data };
+  }
+
+  async function onBulkDeleteSelectedAccounts() {
+    const selected = threadsAccounts.filter((item) => selectedAccountIds.includes(item.id));
+    if (selected.length === 0) {
+      setBulkDeleteMessage("삭제할 계정을 선택하세요.");
+      return;
+    }
+
+    const expiredCount = selected.filter((item) => getTokenStatus(item.tokenExpiresAt).expired).length;
+    const ok = window.confirm(
+      `선택한 Threads 계정 ${selected.length}개를 삭제할까요?\n만료 계정 ${expiredCount}개가 포함되어 있습니다.\n삭제 후 복구할 수 없습니다.`
+    );
+    if (!ok) return;
+
+    setBulkDeleteBusy(true);
+    setBusy(true);
+    setError(null);
+    setBulkDeleteMessage(null);
+    try {
+      const deletedIds: string[] = [];
+      const blocked: Array<{ id: string; name: string; scheduled: number }> = [];
+      const failed: string[] = [];
+
+      for (const target of selected) {
+        const { res, data } = await deleteAccountById(target.id);
+        const name = target.label ?? target.threadsUsername ?? target.threadsUserId ?? target.id;
+        if (res.ok) {
+          deletedIds.push(target.id);
+          continue;
+        }
+        if (res.status === 409) {
+          blocked.push({
+            id: target.id,
+            name,
+            scheduled: Number(data?.counts?.scheduledPosts ?? 0),
+          });
+          continue;
+        }
+        failed.push(`${name}: ${data?.error ?? "삭제 실패"}`);
+      }
+
+      if (blocked.length > 0) {
+        const totalScheduled = blocked.reduce((sum, item) => sum + item.scheduled, 0);
+        const forceOk = window.confirm(
+          `선택 계정 중 ${blocked.length}개에 예약/자동발행 데이터가 연결되어 있습니다.\n연결 예약 ${totalScheduled}건과 관련 데이터까지 함께 삭제할까요?`
+        );
+        if (forceOk) {
+          for (const target of blocked) {
+            const { res, data } = await deleteAccountById(target.id, true);
+            if (res.ok) {
+              deletedIds.push(target.id);
+            } else {
+              failed.push(`${target.name}: ${data?.error ?? "강제 삭제 실패"}`);
+            }
+          }
+        }
+      }
+
+      const remainingSelected = selectedAccountIds.filter((id) => !deletedIds.includes(id));
+      setSelectedAccountIds(remainingSelected);
+      setBulkDeleteMessage(`삭제 완료 ${deletedIds.length}개${failed.length ? ` / 실패 ${failed.length}개: ${failed.join(", ")}` : ""}`);
+
+      if (deletedIds.includes(accountId)) {
+        const next = threadsAccounts.find((item) => !deletedIds.includes(item.id));
+        router.push(next ? `/dashboard/accounts/${next.id}` : "/dashboard");
+        router.refresh();
+        return;
+      }
+
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBulkDeleteBusy(false);
       setBusy(false);
     }
   }
@@ -964,6 +1075,15 @@ export default function AccountWorkspaceClient({ accountId }: { accountId: strin
   );
 
   const accountName = account?.label ?? account?.threadsUsername ?? account?.threadsUserId ?? accountId;
+  const currentTokenStatus = account ? getTokenStatus(account.tokenExpiresAt) : null;
+  const expiredAccounts = useMemo(
+    () => threadsAccounts.filter((item) => getTokenStatus(item.tokenExpiresAt).expired),
+    [threadsAccounts]
+  );
+  const selectedAccounts = useMemo(
+    () => threadsAccounts.filter((item) => selectedAccountIds.includes(item.id)),
+    [threadsAccounts, selectedAccountIds]
+  );
   const todayPublishedCount = account?.workspaceStats?.todayPublishedCount ?? 0;
   const weeklyRangeLabel =
     account?.followerStats?.weekStartDateKst && account?.followerStats?.weekEndDateKst
@@ -995,6 +1115,15 @@ export default function AccountWorkspaceClient({ accountId }: { accountId: strin
             <div className="mt-1 text-sm text-slate-600">
               @{account?.threadsUsername ?? "-"} · uid {account?.threadsUserId ?? "-"} · token 만료 {account ? new Date(account.tokenExpiresAt).toLocaleString() : "-"}
             </div>
+            {currentTokenStatus?.expired ? (
+              <div className="mt-2 inline-flex rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+                토큰 만료됨 - 재연결 또는 삭제 필요
+              </div>
+            ) : currentTokenStatus?.expiringSoon ? (
+              <div className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                토큰 만료 임박 D-{currentTokenStatus.days}
+              </div>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -1014,20 +1143,77 @@ export default function AccountWorkspaceClient({ accountId }: { accountId: strin
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {threadsAccounts.map((acc) => (
-            <Link
-              key={acc.id}
-              href={`/dashboard/accounts/${acc.id}`}
-              className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-medium transition ${
-                acc.id === accountId
-                  ? "border-blue-600 bg-blue-600 text-white"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              {acc.label ?? acc.threadsUsername ?? acc.threadsUserId ?? acc.id}
-            </Link>
-          ))}
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium text-slate-600">
+              전체 {threadsAccounts.length}개 · 토큰 만료 {expiredAccounts.length}개 · 선택 {selectedAccounts.length}개
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={selectExpiredAccounts}
+                disabled={busy || bulkDeleteBusy || expiredAccounts.length === 0}
+                className="inline-flex h-8 items-center justify-center rounded-full border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+              >
+                만료 계정 선택
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedAccountIds([])}
+                disabled={busy || bulkDeleteBusy || selectedAccountIds.length === 0}
+                className="inline-flex h-8 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-white disabled:opacity-50"
+              >
+                선택 해제
+              </button>
+              <button
+                type="button"
+                onClick={onBulkDeleteSelectedAccounts}
+                disabled={busy || bulkDeleteBusy || selectedAccountIds.length === 0}
+                className="inline-flex h-8 items-center justify-center rounded-full bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                선택 삭제
+              </button>
+            </div>
+          </div>
+          {bulkDeleteMessage ? (
+            <div className="mb-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">{bulkDeleteMessage}</div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {threadsAccounts.map((acc) => {
+              const tokenStatus = getTokenStatus(acc.tokenExpiresAt);
+              const isSelected = selectedAccountIds.includes(acc.id);
+              const isCurrent = acc.id === accountId;
+              const name = acc.label ?? acc.threadsUsername ?? acc.threadsUserId ?? acc.id;
+
+              return (
+                <div
+                  key={acc.id}
+                  className={`inline-flex h-9 items-center gap-1 rounded-full border pl-2 pr-1 text-xs font-medium transition ${
+                    isCurrent
+                      ? "border-blue-600 bg-blue-600 text-white"
+                      : tokenStatus.expired
+                        ? "border-rose-300 bg-rose-50 text-rose-800"
+                        : tokenStatus.expiringSoon
+                          ? "border-amber-300 bg-amber-50 text-amber-800"
+                          : "border-slate-200 bg-white text-slate-700"
+                  }`}
+                  title={`token 만료 ${new Date(acc.tokenExpiresAt).toLocaleString()}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelectedAccount(acc.id)}
+                    className="h-3.5 w-3.5 rounded border-slate-300"
+                    aria-label={`${name} 선택`}
+                  />
+                  <Link href={`/dashboard/accounts/${acc.id}`} className="inline-flex h-full items-center px-1">
+                    {name}
+                  </Link>
+                  {tokenStatus.expired ? <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] text-white">만료</span> : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
