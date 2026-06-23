@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { enqueueCommentJob, enqueuePublishJob } from "@/server/queue";
 import { ScheduledPostStatus } from "@prisma/client";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
+import { userWhereForScope } from "@/server/sessionScope";
 
 function toPublicInfraError(details: string) {
   const d = details.toLowerCase();
@@ -17,18 +18,18 @@ function toPublicInfraError(details: string) {
 }
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
   const { id } = await ctx.params;
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const post = await prisma.scheduledPost.findFirst({
-      where: { id, userId },
+      where: { id, ...userWhereForScope(scope) },
     });
     if (!post) return withCookie(NextResponse.json({ error: "Not found" }, { status: 404 }));
 

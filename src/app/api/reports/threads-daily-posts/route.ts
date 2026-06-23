@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { session, upsertUserById } from "@/server/session";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { buildThreadsDailyReport, createThreadsDailyReportWorkbookBuffer } from "@/server/threadsDailyReport";
 
 function filenameFor(dateKst: string) {
@@ -8,17 +8,17 @@ function filenameFor(dateKst: string) {
 }
 
 export async function GET(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
     const url = new URL(req.url);
     const dateKst = url.searchParams.get("date")?.trim() || undefined;
-    const report = await buildThreadsDailyReport({ userId, dateKst });
+    const report = await buildThreadsDailyReport({ userId: scope.userId, userIds: scope.userIds, dateKst });
     const workbook = createThreadsDailyReportWorkbookBuffer({
       dateKst: report.dateKst,
       rows: report.rows,

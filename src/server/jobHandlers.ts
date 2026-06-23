@@ -12,6 +12,9 @@ import { autoRepairScheduledPostWithAi } from "@/server/topicGenerator";
 import { processDuePostQueue, runRssInsightJob } from "@/lib/market/jobs";
 import { assertPublicMediaUrlReachable } from "@/server/publicMedia";
 import { blockedCommentRetryDelayMs, isCommentActionBlockedError } from "@/server/replyDelays";
+import { getThreadsExternalSyncOptionsFromEnv, syncThreadsExternalPostsBatch } from "@/server/threadsExternalSync";
+import { getMasterScopeLoginIds } from "@/server/sessionScope";
+import { userIdFromLoginId } from "@/server/session";
 
 function errorToString(err: unknown) {
   if (err instanceof Error) return `${err.name}: ${err.message}`;
@@ -666,6 +669,28 @@ export async function handleThreadsTokenRefreshJob() {
     });
   }
 
+  return result;
+}
+
+export async function handleThreadsExternalSyncJob() {
+  const result = await syncThreadsExternalPostsBatch({
+    ...getThreadsExternalSyncOptionsFromEnv(),
+    userIds: getMasterScopeLoginIds().map((loginId) => userIdFromLoginId(loginId)),
+    syncInsights: true,
+  });
+  console.log("[threads-external-sync] result:", {
+    scannedAccounts: result.scannedAccounts,
+    fetched: result.fetched,
+    created: result.created,
+    updated: result.updated,
+    failed: result.failed,
+    skipped: result.skipped,
+    lookbackDays: result.lookbackDays,
+    insights: result.insights,
+  });
+  if (result.errors.length > 0) {
+    console.warn("[threads-external-sync] errors:", result.errors.slice(0, 20));
+  }
   return result;
 }
 

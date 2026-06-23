@@ -3,6 +3,7 @@ import "dotenv/config";
 import { Worker } from "bullmq";
 import {
   ensureDailyTopicPlannerJob,
+  ensureThreadsExternalSyncJob,
   ensureInsightsSyncJob,
   ensurePostQueueDispatchJob,
   ensureRssReviewHourlyJob,
@@ -13,6 +14,7 @@ import { getRedisConnection } from "@/server/redis";
 import {
   handleCommentJob,
   handleDailyTopicPlannerJob,
+  handleThreadsExternalSyncJob,
   handleInsightJob,
   handleInsightsSyncJob,
   handlePostQueueDispatchJob,
@@ -41,6 +43,7 @@ async function main() {
     SBUSIM_QUEUE_NAME,
     async (job) => {
       if (job.name === "daily-topic-planner") return handleDailyTopicPlannerJob();
+      if (job.name === "threads-external-sync") return handleThreadsExternalSyncJob();
       if (job.name === "insights-sync") return handleInsightsSyncJob();
       if (job.name === "threads-token-refresh") return handleThreadsTokenRefreshJob();
       if (job.name === "rss-review-hourly") return handleRssReviewHourlyJob();
@@ -79,6 +82,7 @@ async function main() {
   process.on("SIGTERM", shutdown);
 
   await ensureDailyTopicPlannerJob();
+  await ensureThreadsExternalSyncJob();
   await ensureInsightsSyncJob();
   await ensureThreadsTokenRefreshJob();
   await ensureRssReviewHourlyJob();

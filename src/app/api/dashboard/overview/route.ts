@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { ScheduledPostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 import { getAiUsageSummaryForUser } from "@/server/aiUsage";
 import { loadFollowerTrendsForAccounts } from "@/server/followerStats";
+import { userWhereForScope } from "@/server/sessionScope";
 
 function monthRange(monthParam?: string) {
   const now = new Date();
@@ -84,21 +85,22 @@ function compactText(text: string, max = 420) {
 }
 
 export async function GET(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const url = new URL(req.url);
     const range = monthRange(url.searchParams.get("month") ?? undefined);
+    const scopeWhere = userWhereForScope(scope);
 
     const [accounts, posts, aiUsage] = await Promise.all([
       prisma.threadsAccount.findMany({
-        where: { userId },
+        where: scopeWhere,
         orderBy: [{ updatedAt: "desc" }],
         select: {
           id: true,
@@ -112,7 +114,7 @@ export async function GET(req: Request) {
         },
       }),
       prisma.scheduledPost.findMany({
-        where: { userId },
+        where: scopeWhere,
         select: {
           id: true,
           threadsAccountId: true,
@@ -127,10 +129,10 @@ export async function GET(req: Request) {
           text: true,
         },
       }),
-      getAiUsageSummaryForUser(userId),
+      getAiUsageSummaryForUser(scope.userId),
     ]);
     const followerTrends = await loadFollowerTrendsForAccounts({
-      userId,
+      userIds: scope.userIds,
       threadsAccountIds: accounts.map((account) => account.id),
     });
 
@@ -436,6 +438,11 @@ export async function GET(req: Request) {
         calendarDays,
         optimization,
         aiUsage,
+        session: {
+          isMaster: scope.isMaster,
+          canControlAccounts: scope.canControlAccounts,
+          scopeUserIds: scope.userIds,
+        },
       })
     );
   } catch (err) {

@@ -3,9 +3,10 @@ import { z } from "zod";
 import { MediaType, ScheduledPostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { enqueuePublishJob } from "@/server/queue";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 import { defaultCommentDelaySeconds } from "@/server/replyDelays";
+import { userWhereForScope } from "@/server/sessionScope";
 
 const CommitSchema = z.object({
   items: z
@@ -38,9 +39,9 @@ function isTooOld(date: Date) {
 }
 
 export async function POST(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
@@ -51,20 +52,21 @@ export async function POST(req: Request) {
   }
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const accountIds = Array.from(new Set(parsed.data.items.map((item) => item.threadsAccountId)));
     const accounts = await prisma.threadsAccount.findMany({
-      where: { userId, id: { in: accountIds } },
-      select: { id: true, label: true, threadsUsername: true, threadsUserId: true },
+      where: { ...userWhereForScope(scope), id: { in: accountIds } },
+      select: { id: true, userId: true, label: true, threadsUsername: true, threadsUserId: true },
     });
-    const accountSet = new Set(accounts.map((acc) => acc.id));
+    const accountById = new Map(accounts.map((acc) => [acc.id, acc]));
 
     const results: Array<{ rowNumber: number; postId?: string; error?: string; threadsAccountId: string }> = [];
     let created = 0;
 
     for (const item of parsed.data.items) {
-      if (!accountSet.has(item.threadsAccountId)) {
+      const account = accountById.get(item.threadsAccountId);
+      if (!account) {
         results.push({
           rowNumber: item.rowNumber,
           threadsAccountId: item.threadsAccountId,
@@ -120,7 +122,7 @@ export async function POST(req: Request) {
         const commentDelaySeconds = item.replies.length > 0 ? defaultCommentDelaySeconds(item.mediaType) : 0;
         const post = await prisma.scheduledPost.create({
           data: {
-            userId,
+            userId: account.userId,
             threadsAccountId: item.threadsAccountId,
             text: item.text,
             mediaType: item.mediaType,

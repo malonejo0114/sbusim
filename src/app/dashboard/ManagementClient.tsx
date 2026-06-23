@@ -54,6 +54,11 @@ type CalendarItem = {
 
 type OverviewResponse = {
   month: string;
+  session?: {
+    isMaster: boolean;
+    canControlAccounts: boolean;
+    scopeUserIds: string[];
+  };
   accounts: OverviewAccount[];
   calendarDays: CalendarItem[];
   aiUsage?: {
@@ -1239,12 +1244,14 @@ export default function ManagementClient() {
             >
               오늘 글 수집 엑셀 다운로드
             </a>
-            <a
-              className="inline-flex h-10 items-center justify-center rounded-full bg-slate-900 px-5 text-sm font-medium text-white hover:bg-slate-800"
-              href="/api/auth/threads/start"
-            >
-              Threads 계정 추가 연결
-            </a>
+            {data?.session?.canControlAccounts ? (
+              <a
+                className="inline-flex h-10 items-center justify-center rounded-full bg-slate-900 px-5 text-sm font-medium text-white hover:bg-slate-800"
+                href="/api/auth/threads/start"
+              >
+                Threads 계정 추가 연결
+              </a>
+            ) : null}
           </div>
         </div>
 

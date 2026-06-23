@@ -3,8 +3,9 @@ import { z } from "zod";
 import { ScheduledPostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { enqueuePublishJob, removeScheduledPostJobs } from "@/server/queue";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
+import { userWhereForScope } from "@/server/sessionScope";
 
 const UpdateScheduledPostSchema = z.object({
   text: z.string().trim().min(1),
@@ -38,9 +39,9 @@ function isTooOld(date: Date) {
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
@@ -62,10 +63,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   }
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const post = await prisma.scheduledPost.findFirst({
-      where: { id, userId },
+      where: { id, ...userWhereForScope(scope) },
       select: {
         id: true,
         status: true,
@@ -142,19 +143,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
   const { id } = await ctx.params;
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const post = await prisma.scheduledPost.findFirst({
-      where: { id, userId },
+      where: { id, ...userWhereForScope(scope) },
       select: { id: true, status: true, remotePostId: true },
     });
     if (!post) {

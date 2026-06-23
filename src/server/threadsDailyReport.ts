@@ -111,6 +111,11 @@ function sourceLabelForScheduledStatus(status: ScheduledPostStatus) {
   return "예약";
 }
 
+function sourceLabelForPost(args: { origin?: string | null; status: ScheduledPostStatus }) {
+  if (args.origin === "DIRECT") return "직접";
+  return sourceLabelForScheduledStatus(args.status);
+}
+
 export function formatReportCell(item: ThreadsDailyReportItem) {
   const text = cleanText(item.text) || "(본문 없음)";
   return `${formatKstTime(item.occurredAt)} [${item.sourceLabel}] ${text}`;
@@ -159,12 +164,13 @@ function scheduledPostToReportItem(post: {
   threadsAccountId: string;
   text: string;
   status: ScheduledPostStatus;
+  origin?: string | null;
   remotePostId: string | null;
   scheduledAt: Date;
   publishedAt: Date | null;
   lastError: string | null;
 }) {
-  const sourceLabel = sourceLabelForScheduledStatus(post.status);
+  const sourceLabel = sourceLabelForPost({ origin: post.origin, status: post.status });
   const occurredAt = post.publishedAt ?? post.scheduledAt;
   const errorSuffix = post.lastError && post.status !== ScheduledPostStatus.PENDING ? ` / ${post.lastError}` : "";
 
@@ -240,11 +246,13 @@ async function collectDirectItemsForAccount(args: {
 
 export async function buildThreadsDailyReport(args: {
   userId: string;
+  userIds?: string[];
   dateKst?: string;
 }) {
   const range = getKstDateRange(args.dateKst);
+  const userIds = args.userIds && args.userIds.length > 0 ? args.userIds : [args.userId];
   const accounts = await prisma.threadsAccount.findMany({
-    where: { userId: args.userId },
+    where: { userId: { in: userIds } },
     orderBy: [{ label: "asc" }, { threadsUsername: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
@@ -259,7 +267,7 @@ export async function buildThreadsDailyReport(args: {
 
   const scheduledPosts = await prisma.scheduledPost.findMany({
     where: {
-      userId: args.userId,
+      userId: { in: userIds },
       OR: [
         { scheduledAt: { gte: range.start, lt: range.end } },
         { publishedAt: { gte: range.start, lt: range.end } },
@@ -271,6 +279,7 @@ export async function buildThreadsDailyReport(args: {
       threadsAccountId: true,
       text: true,
       status: true,
+      origin: true,
       remotePostId: true,
       scheduledAt: true,
       publishedAt: true,

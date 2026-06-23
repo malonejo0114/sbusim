@@ -23,6 +23,7 @@ function isMissingInsightsPermission(message: string) {
 
 async function syncFollowerSnapshotsBatch(args?: {
   userId?: string;
+  userIds?: string[];
   threadsAccountId?: string;
   force?: boolean;
 }) {
@@ -30,6 +31,7 @@ async function syncFollowerSnapshotsBatch(args?: {
   const accounts = await prisma.threadsAccount.findMany({
     where: {
       ...(args?.userId ? { userId: args.userId } : {}),
+      ...(args?.userIds && args.userIds.length > 0 ? { userId: { in: args.userIds } } : {}),
       ...(args?.threadsAccountId ? { id: args.threadsAccountId } : {}),
       threadsUserId: { not: null },
     },
@@ -170,12 +172,14 @@ export async function syncScheduledPostInsightsById(scheduledPostId: string) {
 
 export async function syncPostInsightsBatch(args?: {
   userId?: string;
+  userIds?: string[];
   threadsAccountId?: string;
   force?: boolean;
   limit?: number;
 }) {
   const followerSync = await syncFollowerSnapshotsBatch({
     userId: args?.userId,
+    userIds: args?.userIds,
     threadsAccountId: args?.threadsAccountId,
     force: args?.force,
   });
@@ -188,6 +192,7 @@ export async function syncPostInsightsBatch(args?: {
   const posts = await prisma.scheduledPost.findMany({
     where: {
       ...(args?.userId ? { userId: args.userId } : {}),
+      ...(args?.userIds && args.userIds.length > 0 ? { userId: { in: args.userIds } } : {}),
       ...(args?.threadsAccountId ? { threadsAccountId: args.threadsAccountId } : {}),
       remotePostId: { not: null },
       scheduledAt: { gte: lookback },

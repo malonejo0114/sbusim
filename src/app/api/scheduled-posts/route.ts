@@ -3,10 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { enqueuePublishJob } from "@/server/queue";
 import { MediaType, ScheduledPostStatus } from "@prisma/client";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 import { assertPublicMediaUrlReachable, isPublicMediaUrl } from "@/server/publicMedia";
 import { defaultCommentDelaySeconds } from "@/server/replyDelays";
+import { userWhereForScope } from "@/server/sessionScope";
 
 const CreateScheduledPostSchema = z.object({
   threadsAccountId: z.string().trim().min(1),
@@ -54,21 +55,22 @@ function isTooOld(date: Date) {
 }
 
 export async function GET(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const url = new URL(req.url);
   const threadsAccountId = url.searchParams.get("threadsAccountId")?.trim() || undefined;
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
+    const scopeWhere = userWhereForScope(scope);
 
     const threadsAccounts = await prisma.threadsAccount.findMany({
-      where: { userId },
+      where: scopeWhere,
       orderBy: [{ updatedAt: "desc" }],
     });
 
     const posts = await prisma.scheduledPost.findMany({
       where: {
-        userId,
+        ...scopeWhere,
         ...(threadsAccountId ? { threadsAccountId } : {}),
       },
       orderBy: { scheduledAt: "desc" },
@@ -98,6 +100,11 @@ export async function GET(req: Request) {
     });
 
     const res = NextResponse.json({
+      session: {
+        isMaster: scope.isMaster,
+        canControlAccounts: scope.canControlAccounts,
+        scopeUserIds: scope.userIds,
+      },
       threadsAccounts: threadsAccounts.map((acc) => ({
         id: acc.id,
         label: acc.label,
@@ -126,7 +133,7 @@ export async function GET(req: Request) {
         })),
       })),
     });
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   } catch (err) {
     console.error("GET /api/scheduled-posts failed:", err);
@@ -136,15 +143,15 @@ export async function GET(req: Request) {
       process.env.NODE_ENV === "production" ? { error } : { error, details },
       { status: 500 }
     );
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   }
 }
 
 export async function POST(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
@@ -190,10 +197,10 @@ export async function POST(req: Request) {
       });
     }
 
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const threadsAccount = await prisma.threadsAccount.findFirst({
-      where: { id: threadsAccountId, userId },
+      where: { id: threadsAccountId, ...userWhereForScope(scope) },
     });
     if (!threadsAccount) {
       return withCookie(NextResponse.json({ error: "선택한 Threads 계정을 찾을 수 없습니다." }, { status: 400 }));
@@ -201,7 +208,7 @@ export async function POST(req: Request) {
 
     const post = await prisma.scheduledPost.create({
       data: {
-        userId,
+        userId: threadsAccount.userId,
         threadsAccountId: threadsAccount.id,
         text,
         mediaType: mediaType as MediaType,

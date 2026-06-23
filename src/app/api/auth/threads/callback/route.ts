@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { encryptString } from "@/server/crypto";
 import { exchangeCodeForShortLivedToken, exchangeShortLivedForLongLivedToken, getThreadsMe } from "@/server/threadsApi";
 import { prisma } from "@/lib/prisma";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 
 function getRequestOrigin(req: Request) {
@@ -41,8 +41,12 @@ export async function GET(req: Request) {
   const redirectUri = `${origin}/api/auth/threads/callback`;
 
   try {
-    const { userId, setCookie } = await ensureSessionUserId();
-    await upsertUserById(userId);
+    const scope = await ensureSessionScope();
+    if (!scope.canControlAccounts) {
+      return NextResponse.json({ error: "Threads 계정 연결은 마스터 계정만 가능합니다." }, { status: 403 });
+    }
+    const targetUserId = scope.isMaster ? scope.userIds[0] ?? scope.userId : scope.userId;
+    await upsertUserById(targetUserId);
 
     const shortLived = await exchangeCodeForShortLivedToken({ code, redirectUri });
     const longLived = await exchangeShortLivedForLongLivedToken({
@@ -59,7 +63,7 @@ export async function GET(req: Request) {
     const existing =
       me.id
         ? await prisma.threadsAccount.findFirst({
-            where: { userId, threadsUserId: me.id },
+            where: { userId: targetUserId, threadsUserId: me.id },
           })
         : null;
 
@@ -75,7 +79,7 @@ export async function GET(req: Request) {
     } else {
       await prisma.threadsAccount.create({
         data: {
-          userId,
+          userId: targetUserId,
           label: me.username ?? me.id ?? "새 Threads 계정",
           threadsUserId: me.id ?? null,
           threadsUsername: me.username ?? null,
@@ -87,7 +91,7 @@ export async function GET(req: Request) {
 
     const res = NextResponse.redirect(new URL("/dashboard", origin));
     res.cookies.set("sbusim_oauth_state", "", { path: "/", maxAge: 0 });
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   } catch (err) {
     console.error("Threads OAuth callback failed:", err);

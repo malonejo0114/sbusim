@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireEnv } from "@/server/env";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session } from "@/server/session";
 
 function getRequestOrigin(req: Request) {
@@ -14,7 +14,10 @@ function getRequestOrigin(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const { userId, setCookie } = await ensureSessionUserId();
+    const scope = await ensureSessionScope();
+    if (!scope.canControlAccounts) {
+      return NextResponse.json({ error: "Threads 계정 연결은 마스터 계정만 가능합니다." }, { status: 403 });
+    }
     const clientId = requireEnv("THREADS_APP_ID");
     const origin = getRequestOrigin(req);
     const redirectUri = `${origin}/api/auth/threads/callback`;
@@ -45,7 +48,7 @@ export async function GET(req: Request) {
       path: "/",
       maxAge: 60 * 10, // 10 minutes
     });
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

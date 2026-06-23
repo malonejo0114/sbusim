@@ -142,16 +142,18 @@ export async function upsertFollowerSnapshot(args: {
 }
 
 export async function loadFollowerTrendsForAccounts(args: {
-  userId: string;
+  userId?: string;
+  userIds?: string[];
   threadsAccountIds: string[];
 }) {
   const accountIds = Array.from(new Set(args.threadsAccountIds.map((id) => id.trim()).filter((id) => id.length > 0)));
   const trends = new Map<string, FollowerTrend>();
   if (accountIds.length === 0) return trends;
+  const userIds = args.userIds && args.userIds.length > 0 ? args.userIds : args.userId ? [args.userId] : [];
 
   const snapshots = await prisma.threadsFollowerSnapshot.findMany({
     where: {
-      userId: args.userId,
+      ...(userIds.length > 0 ? { userId: { in: userIds } } : {}),
       threadsAccountId: { in: accountIds },
     },
     orderBy: [{ threadsAccountId: "asc" }, { dateKst: "asc" }],

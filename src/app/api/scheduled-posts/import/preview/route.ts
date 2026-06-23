@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 import { parseExcelForScheduledPosts } from "@/server/scheduledImport";
+import { userWhereForScope } from "@/server/sessionScope";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const runtime = "nodejs";
@@ -76,14 +77,14 @@ function autoAssignSchedules<T extends { rowNumber: number; threadsAccountId: st
 }
 
 export async function POST(req: Request) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
 
     const form = await req.formData();
     const file = form.get("file");
@@ -104,7 +105,7 @@ export async function POST(req: Request) {
     }
 
     const accounts = await prisma.threadsAccount.findMany({
-      where: { userId },
+      where: userWhereForScope(scope),
       select: { id: true, label: true, threadsUsername: true, threadsUserId: true },
       orderBy: [{ updatedAt: "desc" }],
     });

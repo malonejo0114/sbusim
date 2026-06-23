@@ -173,6 +173,7 @@ model ScheduledPost {
   threadsAccount      ThreadsAccount      @relation(fields: [threadsAccountId], references: [id], onDelete: Cascade)
   dailyTopicPlanId    String?
   dailyTopicPlan      DailyTopicPlan?     @relation(fields: [dailyTopicPlanId], references: [id], onDelete: SetNull)
+  origin              String              @default("SBUSIM")
   text                String
   mediaType           MediaType
   mediaUrl            String?
@@ -200,6 +201,8 @@ model ScheduledPost {
   @@index([userId, scheduledAt])
   @@index([threadsAccountId, scheduledAt])
   @@index([threadsAccountId, publishedAt])
+  @@index([threadsAccountId, remotePostId])
+  @@index([origin, scheduledAt])
   @@index([dailyTopicPlanId])
 }
 

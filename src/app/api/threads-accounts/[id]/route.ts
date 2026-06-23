@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { encryptString } from "@/server/crypto";
-import { ensureSessionUserId, sessionCookieOptions } from "@/server/sessionRequest";
+import { ensureSessionScope, sessionCookieOptions } from "@/server/sessionRequest";
 import { session, upsertUserById } from "@/server/session";
 import { loadFollowerTrendForAccount } from "@/server/followerStats";
+import { userWhereForScope } from "@/server/sessionScope";
 
 function getKstDayRange(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -46,19 +47,20 @@ function validateProxyUrl(proxyUrl: string) {
 }
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
     const { id } = await ctx.params;
     const account = await prisma.threadsAccount.findFirst({
-      where: { id, userId },
+      where: { id, ...userWhereForScope(scope) },
       select: {
         id: true,
+        userId: true,
         label: true,
         threadsUserId: true,
         threadsUsername: true,
@@ -80,10 +82,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     if (!account) return withCookie(NextResponse.json({ error: "Not found" }, { status: 404 }));
     const { startUtc, endUtc } = getKstDayRange();
     const [followerStats, todayPublishedCount] = await Promise.all([
-      loadFollowerTrendForAccount({ userId, threadsAccountId: account.id }),
+      loadFollowerTrendForAccount({ userId: account.userId, threadsAccountId: account.id }),
       prisma.scheduledPost.count({
         where: {
-          userId,
+          userId: account.userId,
           threadsAccountId: account.id,
           remotePostId: { not: null },
           publishedAt: {
@@ -128,11 +130,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 }
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
+  if (!scope.canControlAccounts) {
+    return withCookie(NextResponse.json({ error: "계정 설정 변경은 마스터 계정만 가능합니다." }, { status: 403 }));
+  }
 
   const json = await req.json().catch(() => null);
   const parsed = UpdateAccountSchema.safeParse(json);
@@ -142,12 +147,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
   const { id } = await ctx.params;
   const account = await prisma.threadsAccount.findFirst({
-    where: { id, userId },
+    where: { id, ...userWhereForScope(scope) },
   });
   if (!account) return withCookie(NextResponse.json({ error: "Not found" }, { status: 404 }));
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
     const proxyProvided =
       typeof json === "object" &&
       json !== null &&
@@ -227,10 +232,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (Object.keys(data).length === 0) {
       const { startUtc, endUtc } = getKstDayRange();
       const [followerStats, todayPublishedCount] = await Promise.all([
-        loadFollowerTrendForAccount({ userId, threadsAccountId: account.id }),
+        loadFollowerTrendForAccount({ userId: account.userId, threadsAccountId: account.id }),
         prisma.scheduledPost.count({
           where: {
-            userId,
+            userId: account.userId,
             threadsAccountId: account.id,
             remotePostId: { not: null },
             publishedAt: {
@@ -273,10 +278,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     const { startUtc, endUtc } = getKstDayRange();
     const [followerStats, todayPublishedCount] = await Promise.all([
-      loadFollowerTrendForAccount({ userId, threadsAccountId: updated.id }),
+      loadFollowerTrendForAccount({ userId: updated.userId, threadsAccountId: updated.id }),
       prisma.scheduledPost.count({
         where: {
-          userId,
+          userId: updated.userId,
           threadsAccountId: updated.id,
           remotePostId: { not: null },
           publishedAt: {
@@ -319,17 +324,20 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 }
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { userId, setCookie } = await ensureSessionUserId();
+  const scope = await ensureSessionScope();
   const withCookie = (res: NextResponse) => {
-    if (setCookie) res.cookies.set(session.cookieName, userId, sessionCookieOptions());
+    if (scope.setCookie) res.cookies.set(session.cookieName, scope.userId, sessionCookieOptions());
     return res;
   };
+  if (!scope.canControlAccounts) {
+    return withCookie(NextResponse.json({ error: "계정 삭제는 마스터 계정만 가능합니다." }, { status: 403 }));
+  }
 
   try {
-    await upsertUserById(userId);
+    await upsertUserById(scope.userId);
     const { id } = await ctx.params;
     const account = await prisma.threadsAccount.findFirst({
-      where: { id, userId },
+      where: { id, ...userWhereForScope(scope) },
       select: {
         id: true,
         label: true,
@@ -340,10 +348,10 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     if (!account) return withCookie(NextResponse.json({ error: "Not found" }, { status: 404 }));
 
     const scheduledPostCount = await prisma.scheduledPost.count({
-      where: { threadsAccountId: id, userId },
+      where: { threadsAccountId: id, ...userWhereForScope(scope) },
     });
     const dailyPlanCount = await prisma.dailyTopicPlan.count({
-      where: { threadsAccountId: id, userId },
+      where: { threadsAccountId: id, ...userWhereForScope(scope) },
     });
 
     const force = new URL(req.url).searchParams.get("force") === "1";
