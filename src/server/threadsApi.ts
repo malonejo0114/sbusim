@@ -293,8 +293,6 @@ export async function listUserThreadsPosts(args: {
         access_token: args.accessToken,
         fields,
         limit: String(limit),
-        since: args.since ? String(Math.floor(args.since.getTime() / 1000)) : undefined,
-        until: args.until ? String(Math.floor(args.until.getTime() / 1000)) : undefined,
         after,
       });
 
@@ -308,6 +306,9 @@ export async function listUserThreadsPosts(args: {
     const data = Array.isArray(json?.data) ? json.data : [];
     for (const item of data) {
       if (!item.id) continue;
+      const publishedAt = item.timestamp ? new Date(item.timestamp) : null;
+      if (publishedAt && args.since && publishedAt < args.since) continue;
+      if (publishedAt && args.until && publishedAt > args.until) continue;
       posts.push({
         id: item.id,
         text: item.text,
