@@ -23,6 +23,10 @@ type UserThreadsResponse = {
     timestamp?: string;
     media_type?: string;
     permalink?: string;
+    username?: string;
+    reposted_post?: {
+      id?: string;
+    };
   }>;
   paging?: {
     cursors?: {
@@ -38,6 +42,8 @@ export type UserThreadPost = {
   timestamp?: string;
   mediaType?: string;
   permalink?: string;
+  username?: string;
+  repostedPostId?: string;
   raw: unknown;
 };
 
@@ -281,8 +287,9 @@ export async function listUserThreadsPosts(args: {
 }): Promise<UserThreadPost[]> {
   const limit = Math.max(1, Math.min(args.limit ?? 50, 100));
   const maxPages = Math.max(1, Math.min(args.maxPages ?? 5, 25));
-  const fields = ["id", "text", "timestamp", "media_type", "permalink"].join(",");
+  const fields = ["id", "text", "timestamp", "media_type", "permalink", "username", "reposted_post"].join(",");
   const posts: UserThreadPost[] = [];
+  const repostLookupCache = new Map<string, Promise<UserThreadPost | null>>();
   let after: string | undefined;
   let nextUrl: URL | null = null;
 
@@ -309,12 +316,24 @@ export async function listUserThreadsPosts(args: {
       const publishedAt = item.timestamp ? new Date(item.timestamp) : null;
       if (publishedAt && args.since && publishedAt < args.since) continue;
       if (publishedAt && args.until && publishedAt > args.until) continue;
+      const repostedPostId = item.reposted_post?.id;
+      const originalPost =
+        !item.text?.trim() && repostedPostId
+          ? await getCachedThreadPost({
+              id: repostedPostId,
+              accessToken: args.accessToken,
+              proxyUrl: args.proxyUrl,
+              cache: repostLookupCache,
+            })
+          : null;
       posts.push({
         id: item.id,
-        text: item.text,
+        text: item.text?.trim() || formatRepostText(originalPost),
         timestamp: item.timestamp,
         mediaType: item.media_type,
         permalink: item.permalink,
+        username: item.username,
+        repostedPostId,
         raw: item,
       });
     }
@@ -332,6 +351,67 @@ export async function listUserThreadsPosts(args: {
   }
 
   return posts;
+}
+
+function formatRepostText(post: UserThreadPost | null) {
+  if (!post) return undefined;
+  const text = post?.text?.trim();
+  if (!text) return undefined;
+  const username = post.username?.trim();
+  return username ? `[리포스트 @${username}] ${text}` : `[리포스트] ${text}`;
+}
+
+function getCachedThreadPost(args: {
+  id: string;
+  accessToken: string;
+  proxyUrl?: string;
+  cache: Map<string, Promise<UserThreadPost | null>>;
+}) {
+  const cached = args.cache.get(args.id);
+  if (cached) return cached;
+  const promise = getThreadPostById({
+    id: args.id,
+    accessToken: args.accessToken,
+    proxyUrl: args.proxyUrl,
+  });
+  args.cache.set(args.id, promise);
+  return promise;
+}
+
+async function getThreadPostById(args: {
+  id: string;
+  accessToken: string;
+  proxyUrl?: string;
+}): Promise<UserThreadPost | null> {
+  try {
+    const { json } = await fetchJsonWithRetry<{
+      id?: string;
+      text?: string;
+      timestamp?: string;
+      media_type?: string;
+      permalink?: string;
+      username?: string;
+    }>(
+      toUrl(`/${encodeURIComponent(args.id)}`, {
+        access_token: args.accessToken,
+        fields: ["id", "text", "timestamp", "media_type", "permalink", "username"].join(","),
+      }).toString(),
+      { method: "GET" },
+      { proxyUrl: args.proxyUrl, retries: 1 }
+    );
+    if (!json?.id) return null;
+    return {
+      id: json.id,
+      text: json.text,
+      timestamp: json.timestamp,
+      mediaType: json.media_type,
+      permalink: json.permalink,
+      username: json.username,
+      raw: json,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getUserFollowersCount(args: {
