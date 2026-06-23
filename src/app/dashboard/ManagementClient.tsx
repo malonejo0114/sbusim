@@ -1233,6 +1233,13 @@ export default function ManagementClient() {
               도구 허브
             </Link>
             <a
+              className="inline-flex h-10 items-center justify-center rounded-full border border-blue-200 bg-blue-50 px-5 text-sm font-medium text-blue-700 hover:bg-blue-100"
+              href="/api/reports/threads-daily-posts"
+              download
+            >
+              오늘 글 수집 엑셀 다운로드
+            </a>
+            <a
               className="inline-flex h-10 items-center justify-center rounded-full bg-slate-900 px-5 text-sm font-medium text-white hover:bg-slate-800"
               href="/api/auth/threads/start"
             >

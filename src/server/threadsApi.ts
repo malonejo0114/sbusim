@@ -16,6 +16,31 @@ type PostEngagement = {
   raw: unknown;
 };
 
+type UserThreadsResponse = {
+  data?: Array<{
+    id?: string;
+    text?: string;
+    timestamp?: string;
+    media_type?: string;
+    permalink?: string;
+  }>;
+  paging?: {
+    cursors?: {
+      after?: string;
+    };
+    next?: string;
+  };
+};
+
+export type UserThreadPost = {
+  id: string;
+  text?: string;
+  timestamp?: string;
+  mediaType?: string;
+  permalink?: string;
+  raw: unknown;
+};
+
 type GraphErrorShape = {
   error?: {
     message?: string;
@@ -243,6 +268,69 @@ export async function getThreadsMe(args: {
     console.warn("Threads /me lookup failed:", err);
     return {};
   }
+}
+
+export async function listUserThreadsPosts(args: {
+  accessToken: string;
+  threadsUserId: string;
+  proxyUrl?: string;
+  since?: Date;
+  until?: Date;
+  limit?: number;
+  maxPages?: number;
+}): Promise<UserThreadPost[]> {
+  const limit = Math.max(1, Math.min(args.limit ?? 50, 100));
+  const maxPages = Math.max(1, Math.min(args.maxPages ?? 5, 25));
+  const fields = ["id", "text", "timestamp", "media_type", "permalink"].join(",");
+  const posts: UserThreadPost[] = [];
+  let after: string | undefined;
+  let nextUrl: URL | null = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const requestUrl: URL =
+      nextUrl ??
+      toUrl(`/${encodeURIComponent(args.threadsUserId)}/threads`, {
+        access_token: args.accessToken,
+        fields,
+        limit: String(limit),
+        since: args.since ? String(Math.floor(args.since.getTime() / 1000)) : undefined,
+        until: args.until ? String(Math.floor(args.until.getTime() / 1000)) : undefined,
+        after,
+      });
+
+    const response = await fetchJsonWithRetry<UserThreadsResponse>(
+      requestUrl.toString(),
+      { method: "GET" },
+      { proxyUrl: args.proxyUrl }
+    );
+    const json: UserThreadsResponse | undefined = response.json;
+
+    const data = Array.isArray(json?.data) ? json.data : [];
+    for (const item of data) {
+      if (!item.id) continue;
+      posts.push({
+        id: item.id,
+        text: item.text,
+        timestamp: item.timestamp,
+        mediaType: item.media_type,
+        permalink: item.permalink,
+        raw: item,
+      });
+    }
+
+    const nextPageUrl = json?.paging?.next;
+    if (nextPageUrl) {
+      nextUrl = new URL(nextPageUrl);
+      after = undefined;
+      continue;
+    }
+
+    after = json?.paging?.cursors?.after;
+    nextUrl = null;
+    if (!after || data.length === 0) break;
+  }
+
+  return posts;
 }
 
 export async function getUserFollowersCount(args: {
