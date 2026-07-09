@@ -8,7 +8,7 @@ const PUBLIC_API_PATHS = new Set([
   "/api/auth/threads/deauthorize",
   "/api/auth/threads/data-deletion",
 ]);
-const PUBLIC_API_PREFIXES = ["/api/cron/"];
+const PUBLIC_API_PREFIXES = ["/api/cron/", "/api/local/"];
 
 export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;

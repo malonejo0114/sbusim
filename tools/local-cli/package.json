@@ -1,0 +1,18 @@
+{
+  "name": "sbusim-local-cli",
+  "version": "0.1.0",
+  "description": "Standalone zero-dependency local API CLI for sbusim.",
+  "type": "module",
+  "bin": {
+    "sbusim": "./sbusim.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "sbusim.mjs",
+    "README.md",
+    ".env.local.example"
+  ],
+  "license": "UNLICENSED"
+}
